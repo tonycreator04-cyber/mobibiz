@@ -1,0 +1,130 @@
+
+-- MobiBiz tenant-scoped Row Level Security policies.
+-- Review and test in a disposable Supabase project before applying.
+-- Public storefront reads and order/payment writes stay behind
+-- separately reviewed server-side queries or RPCs.
+
+begin;
+
+create or replace function public.is_tenant_member(target_tenant_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.memberships as m
+    where m.tenant_id = target_tenant_id
+      and m.user_id = (select auth.uid())
+  );
+$$;
+
+create or replace function public.is_tenant_manager(target_tenant_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.memberships as m
+    where m.tenant_id = target_tenant_id
+      and m.user_id = (select auth.uid())
+      and m.role in (
+        'owner'::public.member_role,
+        'manager'::public.member_role
+      )
+  );
+$$;
+
+revoke all on function public.is_tenant_member(uuid)
+  from public, anon;
+
+revoke all on function public.is_tenant_manager(uuid)
+  from public, anon;
+
+grant execute on function public.is_tenant_member(uuid)
+  to authenticated;
+
+grant execute on function public.is_tenant_manager(uuid)
+  to authenticated;
+
+create policy tenants_select_member
+on public.tenants
+for select to authenticated
+using (public.is_tenant_member(id));
+
+create policy memberships_select_same_tenant
+on public.memberships
+for select to authenticated
+using (
+  user_id = (select auth.uid())
+  or public.is_tenant_member(tenant_id)
+);
+
+create policy products_select_member
+on public.products
+for select to authenticated
+using (public.is_tenant_member(tenant_id));
+
+create policy products_insert_manager
+on public.products
+for insert to authenticated
+with check (public.is_tenant_manager(tenant_id));
+
+create policy products_update_manager
+on public.products
+for update to authenticated
+using (public.is_tenant_manager(tenant_id))
+with check (public.is_tenant_manager(tenant_id));
+
+create policy products_delete_manager
+on public.products
+for delete to authenticated
+using (public.is_tenant_manager(tenant_id));
+
+create policy orders_select_member
+on public.orders
+for select to authenticated
+using (public.is_tenant_member(tenant_id));
+
+create policy order_items_select_member
+on public.order_items
+for select to authenticated
+using (
+  exists (
+    select 1
+    from public.orders as o
+    where o.id = order_items.order_id
+      and public.is_tenant_member(o.tenant_id)
+  )
+);
+
+create policy payment_transactions_select_manager
+on public.payment_transactions
+for select to authenticated
+using (
+  exists (
+    select 1
+    from public.orders as o
+    where o.id = payment_transactions.order_id
+      and public.is_tenant_manager(o.tenant_id)
+  )
+);
+
+create policy audit_events_select_manager
+on public.audit_events
+for select to authenticated
+using (
+  tenant_id is not null
+  and public.is_tenant_manager(tenant_id)
+);
+
+-- Intentionally no direct client writes for:
+-- tenant setup, memberships, orders, payment transactions, or audit events.
+-- Add reviewed server-side RPCs before enabling those operations.
+
+commit;  
