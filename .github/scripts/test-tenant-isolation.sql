@@ -5,6 +5,7 @@
 INSERT INTO auth.users (id) VALUES
   ('11111111-1111-4111-8111-111111111111'),
   ('22222222-2222-4222-8222-222222222222');
+  ('33333333-3333-4333-8333-333333333333');
 
 INSERT INTO public.tenants (id, name, slug)
 VALUES
@@ -19,7 +20,8 @@ VALUES
    '11111111-1111-4111-8111-111111111111', 'owner'),
   ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
    '22222222-2222-4222-8222-222222222222', 'owner');
-
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+   '33333333-3333-4333-8333-333333333333', 'staff');
 
 INSERT INTO public.products
   (id, tenant_id, name, price_kes, stock)
