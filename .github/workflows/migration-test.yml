@@ -113,3 +113,10 @@ jobs:
             END LOOP;
           END $$;
           SQL
+      - name: Run tenant-isolation tests
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -U postgres -d mobibiz_test \
+            -v ON_ERROR_STOP=1 \
+            -f .github/scripts/test-tenant-isolation.sql
