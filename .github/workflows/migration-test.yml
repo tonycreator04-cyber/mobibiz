@@ -61,7 +61,6 @@ jobs:
             )::uuid;
           $$;
           SQL
-
       - name: Apply migration files
         env:
           PGPASSWORD: test_password
