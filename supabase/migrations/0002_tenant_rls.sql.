@@ -1,130 +1,213 @@
-
--- MobiBiz tenant-scoped Row Level Security policies.
--- Review and test in a disposable Supabase project before applying.
--- Public storefront reads and order/payment writes stay behind
--- separately reviewed server-side queries or RPCs.
+-- MobiBiz tenant-scoped Row Level Security.
+-- This migration is for review and automated testing first.
+-- Do not apply to the live Supabase database yet.
 
 begin;
 
-create or replace function public.is_tenant_member(target_tenant_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.memberships as m
-    where m.tenant_id = target_tenant_id
-      and m.user_id = (select auth.uid())
-  );
-$$;
+-- Start from explicit, least-privilege table permissions.
+revoke all on table
+  public.tenants,
+  public.memberships,
+  public.products,
+  public.orders,
+  public.order_items,
+  public.payment_transactions,
+  public.audit_events
+from anon, authenticated;
 
-create or replace function public.is_tenant_manager(target_tenant_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select exists (
+-- Authenticated merchants may query these tables.
+-- RLS policies below determine which rows they can access.
+grant select on table
+  public.tenants,
+  public.memberships,
+  public.products,
+  public.orders,
+  public.order_items,
+  public.payment_transactions,
+  public.audit_events
+to authenticated;
+
+-- Product writes are permitted at the SQL privilege level,
+-- but RLS limits them to owners and managers in that tenant.
+grant insert, update, delete on table public.products
+to authenticated;
+
+-- Tenants: a user can see only tenants they belong to.
+create policy tenants_select_member
+on public.tenants
+for select
+to authenticated
+using (
+  exists (
     select 1
-    from public.memberships as m
-    where m.tenant_id = target_tenant_id
+    from public.memberships m
+    where m.tenant_id = tenants.id
+      and m.user_id = (select auth.uid())
+  )
+);
+
+-- Memberships: users can see only their own membership rows.
+-- Team administration needs a separately reviewed mechanism.
+create policy memberships_select_self
+on public.memberships
+for select
+to authenticated
+using (user_id = (select auth.uid()));
+
+-- Products: members may read products in their own tenant.
+create policy products_select_member
+on public.products
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = products.tenant_id
+      and m.user_id = (select auth.uid())
+  )
+);
+
+-- Only owners and managers may create products.
+create policy products_insert_manager
+on public.products
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = products.tenant_id
       and m.user_id = (select auth.uid())
       and m.role in (
         'owner'::public.member_role,
         'manager'::public.member_role
       )
-  );
-$$;
-
-revoke all on function public.is_tenant_member(uuid)
-  from public, anon;
-
-revoke all on function public.is_tenant_manager(uuid)
-  from public, anon;
-
-grant execute on function public.is_tenant_member(uuid)
-  to authenticated;
-
-grant execute on function public.is_tenant_manager(uuid)
-  to authenticated;
-
-create policy tenants_select_member
-on public.tenants
-for select to authenticated
-using (public.is_tenant_member(id));
-
-create policy memberships_select_same_tenant
-on public.memberships
-for select to authenticated
-using (
-  user_id = (select auth.uid())
-  or public.is_tenant_member(tenant_id)
+  )
 );
 
-create policy products_select_member
-on public.products
-for select to authenticated
-using (public.is_tenant_member(tenant_id));
-
-create policy products_insert_manager
-on public.products
-for insert to authenticated
-with check (public.is_tenant_manager(tenant_id));
-
+-- Only owners and managers may update products, and the
+-- resulting row must remain within a tenant they manage.
 create policy products_update_manager
 on public.products
-for update to authenticated
-using (public.is_tenant_manager(tenant_id))
-with check (public.is_tenant_manager(tenant_id));
+for update
+to authenticated
+using (
+  exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = products.tenant_id
+      and m.user_id = (select auth.uid())
+      and m.role in (
+        'owner'::public.member_role,
+        'manager'::public.member_role
+      )
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = products.tenant_id
+      and m.user_id = (select auth.uid())
+      and m.role in (
+        'owner'::public.member_role,
+        'manager'::public.member_role
+      )
+  )
+);
 
+-- Only owners and managers may delete products.
 create policy products_delete_manager
 on public.products
-for delete to authenticated
-using (public.is_tenant_manager(tenant_id));
+for delete
+to authenticated
+using (
+  exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = products.tenant_id
+      and m.user_id = (select auth.uid())
+      and m.role in (
+        'owner'::public.member_role,
+        'manager'::public.member_role
+      )
+  )
+);
 
+-- Orders: members may read their own tenant's orders.
 create policy orders_select_member
 on public.orders
-for select to authenticated
-using (public.is_tenant_member(tenant_id));
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = orders.tenant_id
+      and m.user_id = (select auth.uid())
+  )
+);
 
+-- Order items: readable only when the parent order belongs
+-- to a tenant of which the current user is a member.
 create policy order_items_select_member
 on public.order_items
-for select to authenticated
+for select
+to authenticated
 using (
   exists (
     select 1
-    from public.orders as o
+    from public.orders o
+    join public.memberships m
+      on m.tenant_id = o.tenant_id
     where o.id = order_items.order_id
-      and public.is_tenant_member(o.tenant_id)
+      and m.user_id = (select auth.uid())
   )
 );
 
+-- Payment records: owners and managers only.
 create policy payment_transactions_select_manager
 on public.payment_transactions
-for select to authenticated
+for select
+to authenticated
 using (
   exists (
     select 1
-    from public.orders as o
+    from public.orders o
+    join public.memberships m
+      on m.tenant_id = o.tenant_id
     where o.id = payment_transactions.order_id
-      and public.is_tenant_manager(o.tenant_id)
+      and m.user_id = (select auth.uid())
+      and m.role in (
+        'owner'::public.member_role,
+        'manager'::public.member_role
+      )
   )
 );
 
+-- Audit records: owners and managers may read records
+-- belonging to their own tenant.
 create policy audit_events_select_manager
 on public.audit_events
-for select to authenticated
+for select
+to authenticated
 using (
   tenant_id is not null
-  and public.is_tenant_manager(tenant_id)
+  and exists (
+    select 1
+    from public.memberships m
+    where m.tenant_id = audit_events.tenant_id
+      and m.user_id = (select auth.uid())
+      and m.role in (
+        'owner'::public.member_role,
+        'manager'::public.member_role
+      )
+  )
 );
 
--- Intentionally no direct client writes for:
--- tenant setup, memberships, orders, payment transactions, or audit events.
--- Add reviewed server-side RPCs before enabling those operations.
+-- Intentionally no direct client writes for tenants,
+-- memberships, orders, order items, payment transactions,
+-- or audit events. Secure server-side operations are needed.
 
-commit;  
+commit;
