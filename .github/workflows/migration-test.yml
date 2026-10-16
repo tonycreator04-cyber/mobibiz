@@ -1,0 +1,115 @@
+
+name: MobiBiz Migration Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - ".github/workflows/migration-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - ".github/workflows/migration-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migration-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: mobibiz_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mobibiz_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Supabase test environment
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -U postgres -d mobibiz_test \
+            -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA auth;
+          CREATE TABLE auth.users (
+            id uuid PRIMARY KEY
+          );
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          CREATE OR REPLACE FUNCTION auth.uid()
+          RETURNS uuid
+          LANGUAGE sql STABLE
+          AS $$
+            SELECT NULLIF(
+              current_setting('request.jwt.claim.sub', true), ''
+            )::uuid;
+          $$;
+          SQL
+
+      - name: Apply migration files
+        env:
+          PGPASSWORD: test_password
+        run: |
+          set -eu
+          found=0
+          for file in supabase/migrations/*.sql; do
+            [ -f "$file" ] || continue
+            found=1
+            echo "Testing $file"
+            psql -h localhost -U postgres -d mobibiz_test \
+              -v ON_ERROR_STOP=1 -f "$file"
+          done
+          test "$found" -eq 1
+
+      - name: Verify tables and row-level security
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -U postgres -d mobibiz_test \
+            -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+            table_name text;
+          BEGIN
+            FOREACH table_name IN ARRAY ARRAY[
+              'tenants', 'memberships', 'products', 'orders',
+              'order_items', 'payment_transactions', 'audit_events'
+            ]
+            LOOP
+              IF NOT EXISTS (
+                SELECT 1
+                FROM pg_tables
+                WHERE schemaname = 'public'
+                  AND tablename = table_name
+              ) THEN
+                RAISE EXCEPTION 'Missing table: %', table_name;
+              END IF;
+
+              IF NOT (
+                SELECT relrowsecurity
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = table_name
+              ) THEN
+                RAISE EXCEPTION 'RLS is not enabled on %', table_name;
+              END IF;
+            END LOOP;
+          END $$;
+          SQL
