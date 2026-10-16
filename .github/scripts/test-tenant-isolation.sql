@@ -20,14 +20,25 @@ VALUES
   ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
    '22222222-2222-4222-8222-222222222222', 'owner');
 
+
 INSERT INTO public.products
   (id, tenant_id, name, price_kes, stock)
 VALUES
-  ('aaaaaaaa-0001-4000-8000-000000000001',
-   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-   'Private Product A', 100, 5),
-  ('bbbbbbbb-0001-4000-8000-000000000001',
-   'Private Product B', 200, 5);
+  (
+    'aaaaaaaa-0001-4000-8000-000000000001',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'Private Product A',
+    100,
+    5
+  ),
+  (
+    'bbbbbbbb-0001-4000-8000-000000000001',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    'Private Product B',
+    200,
+    5
+  );
+
 
 -- Simulate an authenticated session for Business A.
 SET ROLE authenticated;
