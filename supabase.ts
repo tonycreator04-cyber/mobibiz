@@ -1,0 +1,3 @@
+import {createBrowserClient,createServerClient} from '@supabase/ssr';
+export function createSupabaseBrowserClient(){const url=process.env.NEXT_PUBLIC_SUPABASE_URL;const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;if(!url||!key)throw new Error('Supabase environment variables are not configured.');return createBrowserClient(url,key)}
+export function createSupabaseServerClient(){const url=process.env.NEXT_PUBLIC_SUPABASE_URL;const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;if(!url||!key)throw new Error('Supabase environment variables are not configured.');return createServerClient(url,key,{cookies:{getAll(){return []},setAll(){/* Configure request cookie integration in Next.js proxy before enabling auth. */}}})}
