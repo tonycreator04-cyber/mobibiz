@@ -1,4 +1,4 @@
-
+import Link from "next/link";
 const features = [
   {
     icon: "🛍️",
@@ -31,7 +31,7 @@ export default function Home() {
     <main style={{ background: "var(--paper)", minHeight: "100vh" }}>
       <header className="container">
         <nav className="nav">
-          <a href="/" className="logo">MobiBiz<span style={{ color: "var(--teal)" }}>.</span></a>
+      <Link href="/" className="logo">MobiBiz<span style={{ color: "var(--teal)" }}>.</span></Link>
           <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
             <a href="/demo-store" style={{ fontWeight: 600 }}>Storefront</a>
             <a href="/dashboard" style={{ fontWeight: 600 }}>Dashboard</a>
